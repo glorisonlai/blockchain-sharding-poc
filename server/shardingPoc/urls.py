@@ -15,9 +15,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from shardingApp.views import main
+from shardingApp.views import shard, normal, user
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('shard/', main)
+    path('get-user/', user),
+    path('shard/', shard),
+    path('normal/', normal),
 ]
