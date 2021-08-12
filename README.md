@@ -10,6 +10,10 @@
 
 `git pull`
 
+### Setting up venv:
+```pip install venv```
+```python -m venv ./```
+
 ### Run locally:
 
 1. `source Scripts/activate`
