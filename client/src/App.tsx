@@ -33,7 +33,7 @@ const App = () => {
 
   useEffect(() => {
     const initializeKeys = async () => {
-      const { data } = await axios.get(`${serverUrl}/api/get-user`);
+      const { data } = await axios.get(`${serverUrl}/user`);
       publicKey.current = data.publicKey;
       privKey.current = data.privKey;
       setLoading(false);
@@ -46,7 +46,7 @@ const App = () => {
     if (loading) return;
     setLoading(true);
     const { data } = await axios.post(
-      `${serverUrl}/api/${sequential ? "normal" : "shard"}`,
+      `${serverUrl}/${sequential ? "normal" : "shard"}`,
       { publicKey, privKey, transactionAmount }
     );
     setTransactionRes(data.result);
