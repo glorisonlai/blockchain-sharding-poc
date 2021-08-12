@@ -1,0 +1,21 @@
+{
+  "name": "blockchain-sharding-poc",
+  "version": "1.0.0",
+  "description": "",
+  "main": "client/index.tsx",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "concurrently --kill-others \"cd client && npm start\" \"cd server && python3 manage.py runserver\"",
+    "postinstall": "cd client && npm install && cd ../server && pip install -r requirements.txt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/glorisonlai/blockchain-sharding-poc.git"
+  },
+  "author": "Glorison Lai",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/glorisonlai/blockchain-sharding-poc/issues"
+  },
+  "homepage": "https://github.com/glorisonlai/blockchain-sharding-poc#readme"
+}
