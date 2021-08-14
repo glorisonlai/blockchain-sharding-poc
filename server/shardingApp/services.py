@@ -1,8 +1,7 @@
 from .models import Wallet, BlockChain
 
-chain = None # Might need redis, or some state service :(
-
 def generate_user_wallet():
 	chain = BlockChain()
 	user = Wallet('Satoshi')
-	return user.generate_rsa_key_pair()
+	priv_key, pub_key = user.generate_rsa_key_pair()
+	return {'balance': user.balance, 'privKey': priv_key, 'pubKey': pub_key}
