@@ -1,7 +1,6 @@
-# from django.db import models
+from django.db import models
 from Crypto.PublicKey import RSA
 
-# Create your models here.
 class Wallet:
 	def __init__(self, username: str) -> None:
 		self.name: str = username
@@ -13,6 +12,11 @@ class Wallet:
 		key = RSA.generate(2048)
 		self.pub_key = key.public_key()
 		return (key.export_key('PEM'), key.public_key().export_key('PEM'))
+
+wallets = {
+	'Alice': Wallet('Alice'),
+	'Bob': Wallet('Bob'),
+}
 
 class Block:
 	def __init__(self, prev: bytes, transaction: bytes):
