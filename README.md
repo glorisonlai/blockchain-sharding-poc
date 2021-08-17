@@ -15,7 +15,9 @@
 1. `pip install venv`
 2. `python -m venv ./`
 
-### Setting up Redis:
+### <del>Setting up Redis:</del>
+
+Not yet!
 
 - #### Windows
   1.  `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux`
@@ -31,7 +33,7 @@
 1. `source Scripts/activate`
 2. `npm install`
 3. Launch Ubuntu WSL
-4. `redis-server`
+4. <del>`redis-server`</del>
 5. `npm run dev`
 
 ### Stopping Redis
