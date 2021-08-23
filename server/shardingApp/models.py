@@ -1,50 +1,277 @@
-from django.db import models
 from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA256
+from Crypto.Signature import pkcs1_15
 import multiprocessing as mp
+from queue import Queue
+import random
+import functools
 
 class Wallet:
 	def __init__(self, username: str) -> None:
-		self.name: str = username
-		self.balance: int = 100
-		self.pub_key: str = ''
+		self._name: str = username
+		self._balance: int = 100
+		self._pub_key: str = ''
+		self._shard_id: int = -1
+		self._transactions = 0
 		self.generate_rsa_key_pair()
+
 
 	def generate_rsa_key_pair(self) -> tuple[bytes,bytes]:
 		key = RSA.generate(2048)
-		self.pub_key = key.public_key()
+		self._pub_key = key.public_key()
 		return (key.export_key('PEM'), key.public_key().export_key('PEM'))
 
-class Block:
-	def __init__(self, prev: bytes, transaction: bytes):
-		self.prev = prev
-		self.transaction = transaction
+	@property
+	def name(self) -> str:
+		return self._name
+
+	@property
+	def balance(self) -> int:
+		return self._balance
+	
+	def pay(self, decrement: int) -> None:
+		if not isinstance(decrement, int) or abs(decrement) > self._balance:
+			raise ValueError
+		self._balance -= decrement
+
+	@property
+	def pub_key(self) -> str:
+		return self._pub_key
+
+	@property
+	def shard_id(self) -> int:
+		return self._shard_id
+
+	@shard_id.setter
+	def shard_id(self, new_shard_id: int) -> None:
+		if not isinstance(new_shard_id, int) or new_shard_id < 0:
+			raise ValueError
+		self._shard_id = new_shard_id
+
+	def correct_nonce(self, nonce) -> bool:
+		return nonce == self._transactions + 1
+
+	def increment_transaction(self) -> None:
+		self._transactions += 1
+
+
+	def enough_balance(self, decrement: int) -> bool:
+		return decrement > 0 or decrement > self.balance
+	
+
+class WalletController:
+	_wallets = {}
+	def __init__(self, *names: list[str]) -> None:
+		WalletController._wallets = {
+			name: Wallet(name) for name in names
+		}
+
+	@staticmethod
+	def users() -> list[str]:
+		return WalletController._wallets.keys()
+
+	@staticmethod
+	def has_user(username: str) -> bool:
+		return username in WalletController._wallets 
+
+	@staticmethod
+	def get_user(username: str) -> Wallet:
+		if username not in WalletController._wallets:
+			raise KeyError
+		return WalletController._wallets[username]
+
 
 class Transaction:
-	def __init__(self, bytes):
-		self.bytes = bytes
+	@staticmethod
+	def validate(transaction_str: str, signature: str) -> bool:
+		return (Transaction.verify_signature(transaction_str, signature) and \
+			Transaction.validate_transaction(transaction_str))
 
-	def validate_byte_format(self):
-		return True
+
+	@staticmethod
+	def convert_to_bytes(transaction: str) -> bytes:
+		return bytearray(transaction.encode('latin-1'))
+
+
+	@staticmethod
+	def parse_string(transaction_str: str) -> tuple[int, str, str, str, int]:
+		''' Return transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
+
+			Arguments
+				transaction_str -- String representation of transaction formatted as above
+			
+			Returns
+				Tuple of typed transaction values
+
+			Throws
+				ValueError if transacton_str is formatted incorrectly
+		'''
+		transaction_str_tokens = transaction_str.split(':')
+		amount, user_id, public_key, payee, nonce = transaction_str_tokens
+		amount = int(amount)
+		nonce = int(nonce)
+
+		return amount, user_id, public_key, payee, nonce
+
+	@staticmethod
+	def validate_amount(amount: int, user_id: str, nonce: int) -> bool:
+		''' Checks:
+		-- Amount is not negative, 0, or exceeds max size
+		-- Username and Payee exists in wallets
+		-- Username and Public Key matches info in Wallet store
+		-- Nonce was not previously used
+		-- Chain mempool is not full
+
+			Arguments
+				Transaction -- String representation of transaction, formatted as above
+
+			Returns
+				True if request passes all checks
+		'''
+		user_wallet = WalletController.get_user(user_id)
+		return amount > 0 and \
+			user_wallet.correct_nonce(nonce) and \
+			user_wallet.enough_balance(amount)
+
+	@staticmethod
+	def verify_signature(transaction_str: str, public_key: str, signature: str) -> bool:
+		'''
+		-- Transaction and Signature exist
+		-- Signature verifies original sender 
+		'''
+		if not (transaction_str and public_key and signature): return False
+		try:
+			sig_verify = SHA256.new()
+			sig_verify.update(bytes(transaction_str))
+			pkcs1_15.new(public_key).verify(sig_verify, signature)
+			return True
+		except (ValueError, TypeError):
+			return False
+
+	@staticmethod
+	def validate_stakeholders(user_id: str, public_key: str, payee: str) -> bool:
+		return WalletController.has_user(user_id) and \
+			WalletController.has_user(payee) and \
+			WalletController.get_user(user_id).pub_key == public_key and \
+			WalletController.get_user(user_id).name == user_id
+			
+	@staticmethod
+	def validate_transaction(transaction_str: str, ) -> bool:
+		try:
+			amount, user_id, public_key, payee, nonce = Transaction.parse_string(transaction_str)
+		except ValueError:
+			return False
+
+		return (Transaction.validate_stakeholders(user_id, public_key, payee) and \
+			Transaction.validate_amount(amount, user_id, nonce))
+
+
+class Block:
+	def __init__(self, prev_proof_of_work: bytes, transaction: bytes) -> None:
+		self._prev_hash = prev_proof_of_work
+		self._transaction = transaction
+		self._nonce = b''
+		self._block_hash = b''
+		self.calculate_block_hash()
+
+
+	@property
+	def block_hash(self) -> bytes:
+		return self._block_hash
+
+	@property
+	def nonce(self) -> bytes:
+		return self._nonce
+
+	@nonce.setter
+	def nonce(self, new_bytes) -> None:
+		if not isinstance(new_bytes, bytes):
+			raise TypeError
+		self.nonce = new_bytes
+		self.calculate_block_hash()
+
+	def calculate_block_hash(self) -> None:
+		message = SHA256.new()
+		message.update(self._prev_hash)
+		message.update(self._transaction)
+		message.update(self.nonce)
+		self._block_hash = message.digest()
+
 
 class BlockChain:
-	shards = 10
-	occupations = 5
-
-	def __init__(self):
-		self.__chain = [Block(b'', b'')]
+	def __init__(self) -> None:
+		self._chain = [Block(b'', b'Genesis')]
+		self._unconfirmed_transactions: Queue[Transaction] = Queue()
 	
-	def head(self):
-		return self.__chain[-1]
+
+	def last_transaction(self) -> Block:
+		return self._chain[-1]
+
+
+	def unconfirmed_full(self) -> bool:
+		return self._unconfirmed_transactions.full()
+
+
+	def unconfirmed_head(self) -> Transaction:
+		if self._unconfirmed_transactions.empty():
+			raise IndexError
+		return self._unconfirmed_transactions.get()
+
+
+	def append_unconfirmed(self, transaction: Transaction) -> None:
+		if self._unconfirmed_transactions.full():
+			raise IndexError
+		self._unconfirmed_transactions.put(transaction)
+
 
 class Shard:
-	def __init__(self, occupations: int):
-		self.__occupations: list[Wallet] = [None] * occupations
+	_num_occupations = 2
+
+	def __init__(self) -> None:
+		self._occupations: list[Wallet] = [] * Shard._num_occupations
+	
+
+	def allocate_occupation(self, wallet: Wallet) -> None:
+		allocated_occ = random.randint(0, len(self._occupations)-1)
+		self._occupations[allocated_occ].append(wallet)
+
+
+	@property
+	def shard_wallets(self):
+		return functools.reduce(lambda accum, el: accum+el, self._occupations)
+
 
 class ShardController:
-	def __init__(self, shard_count, occ_count):
-		self.__shards = [Shard(occ_count)] * shard_count
+	_num_shards = 3
+	
+	def __init__(self, wallets) -> None:
+		self._shards: list[Shard] = [Shard()] * self._num_shards
+		self._allocate_wallets(wallets)
 
-	def allocate_wallets(self, wallets):
-		for index, wallet in enumerate(wallets):
-			self.__shards[index % len(self.__shards)].allocate
 
+	def _allocate_wallets(self, wallets: list[Wallet]) -> None:
+		for wallet in wallets:
+			allocated_shard = random.randint(0, len(self._shards)-1)
+			wallet.shard_id = allocated_shard
+			self._shards[allocated_shard].allocate_occupation(wallet)
+
+
+	def get_shard_wallets(self, shard_id) -> list[Wallet]:
+		if shard_id < 0 or shard_id > len(self._shards):
+			return []
+		return self._shards[shard_id].shard_wallets
+
+
+class Miner:
+	mining_difficulty = 1
+
+	@staticmethod
+	def mine(block: Block) -> Block:
+		iterations = 0
+		while (any(block.block_hash[byte_index] != b'' \
+			for byte_index in range(Miner.mining_difficulty))):
+			iterations += 1
+			# TODO: Should eventually move over to os.urandom
+			# block.nonce = os.urandom(5)
+			block.nonce = random.randbytes(5)
+		return block

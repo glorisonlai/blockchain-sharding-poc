@@ -23,6 +23,7 @@ type TransactionResult = {
 };
 
 type UserResponse = {
+  user: string;
   balance: number;
   privKey: string;
   pubKey: string;
@@ -32,6 +33,7 @@ type UserResponse = {
 type TransactionForm = {
   shards: number;
   transactionAmount: number;
+  payee: string;
 } & UserResponse;
 
 enum TransactionEnum {
@@ -50,12 +52,14 @@ const App = () => {
       balance: 0,
     });
     const [transactionForm, setTransactionForm] = useState<TransactionForm>({
+      user: "",
       balance: 0,
       privKey: "",
       pubKey: "",
       shards: 10,
       transactionAmount: 0,
       users: [],
+      payee: "",
     });
     const serverUrl =
       process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
@@ -64,6 +68,7 @@ const App = () => {
       const initializeKeys = async () => {
         const { data } = await axios.get(`${serverUrl}/get-user`);
         const res: UserResponse = {
+          user: data.user,
           pubKey: data.pubKey,
           privKey: data.privKey,
           balance: data.balance,
@@ -90,7 +95,7 @@ const App = () => {
       if (loading) return;
       if (userKey < 0 || userKey >= transactionForm.users.length) return;
       setLoading(true);
-      const serializedTransaction = `${transactionForm.transactionAmount}:${transactionForm.pubKey}:${transactionForm.users[userKey]}`;
+      const serializedTransaction = `${transactionForm.transactionAmount}:${transactionForm.user}:${transactionForm.pubKey}:${transactionForm.payee}`;
       const signature = signTransaction(
         serializedTransaction,
         transactionForm.privKey
@@ -99,7 +104,6 @@ const App = () => {
       const { data } = await axios.post(
         `${serverUrl}/${sequential ? "normal" : "shard"}`,
         {
-          pubKey: transactionForm.pubKey,
           transaction: serializedTransaction,
           signature,
         }
