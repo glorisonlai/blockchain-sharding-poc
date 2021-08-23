@@ -27,7 +27,6 @@ type UserResponse = {
   balance: number;
   privKey: string;
   pubKey: string;
-  users: string[];
 };
 
 type TransactionForm = {
@@ -58,7 +57,6 @@ const App = () => {
       pubKey: "",
       shards: 10,
       transactionAmount: 0,
-      users: [],
       payee: "",
     });
     const serverUrl =
@@ -66,18 +64,8 @@ const App = () => {
 
     useEffect(() => {
       const initializeKeys = async () => {
-        const { data } = await axios.get(`${serverUrl}/get-user`);
-        const res: UserResponse = {
-          user: data.user,
-          pubKey: data.pubKey,
-          privKey: data.privKey,
-          balance: data.balance,
-          users: ["hello"],
-        };
-        setTransactionForm((transactionForm) => ({
-          ...transactionForm,
-          ...res,
-        }));
+        const res = await axios.get(`${serverUrl}/get-user`);
+        const data: UserResponse[] = res.data;
         setLoading(false);
       };
 
