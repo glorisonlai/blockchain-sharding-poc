@@ -97,7 +97,7 @@ def check_blockchain_not_full() -> bool:
 
 
 @timeit
-def serial_transaction_request(transaction: Transaction) -> dict:
+def serial_transaction_request() -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -120,12 +120,19 @@ def serial_transaction_request(transaction: Transaction) -> dict:
 			blockchain, and is out of scope for this basic implementation
 	'''
 	global chain
-	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head)
+	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
 	miner_count = 3
-	with mp.Pool(min(os.c)) as miner_pool:
-		miner_pool.apply_async(Miner.mine)
+	with mp.Pool(min(miner_count, mp.cpu_count() -1)) as miner_pool:
+		miner_pool.apply_async(Miner.mine(new_block))
 
 
-def shard_transaction_request(transaction: Transaction) -> dict:
+def shard_transaction_request() -> dict:
 	pass
 
+def test():
+	blah = chain.last_transaction().block_hash
+	hex = blah.hex()
+	back = bytes.fromhex(hex)
+	print(blah)
+	print(back)
+	return blah == back

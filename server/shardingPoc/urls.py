@@ -15,11 +15,13 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from shardingApp.views import shard, normal, user
+from shardingApp.views import shard, normal, user, transactions,test
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('get-user/', user),
+    path('parse-transactions', transactions),
     path('shard/', shard),
     path('normal/', normal),
+    path('test/', test),
 ]
