@@ -1,12 +1,11 @@
-from .models import Block, BlockChain, Miner, ShardController, Transaction, WalletController
+from Crypto import Signature
+from .models import Block, BlockChain, Miner, ShardController, Transaction
+from .store import WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
 from Crypto.PublicKey import RSA
-import time
-import functools
-import os
 import multiprocessing as mp
-import random
+from .decorators import timeit
 
 """ Global chain """
 chain = BlockChain()# TODO: Should eventually move over to Redis
@@ -17,27 +16,9 @@ wallets = WalletController('Alice', 'Bob' )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'KEVIN', 'Loc', 'Margaret'
 
+""" Global shards """
+shards = ShardController
 
-def timeit(func):
-	''' 
-	Decorator function that times a function call
-	Stores last_time attribute as time taken to run
-
-		Arguments:
-			func: Function to run
-
-		Returns
-			Wrapped function
-	'''
-	@functools.wraps(func)
-	def wrapper(*args, **kwargs):
-		start = time.perf_counter()
-		ret = func(*args, **kwargs)
-		end = time.perf_counter()
-		wrapper.last_time = end - start
-		return ret
-	wrapper.last_time = 0
-	return wrapper
 
 
 def get_user_wallet_info(username: str) -> dict[str, str]:
@@ -47,6 +28,7 @@ def get_user_wallet_info(username: str) -> dict[str, str]:
 	return {
 		'user': user_wallet.name,
 		'balance': str(user_wallet.balance),
+		'shard': user_wallet.shard_id,
 		'privKey': priv_key.hex(), 
 		'pubKey': pub_key.hex()
 	}
@@ -100,7 +82,7 @@ def check_blockchain_not_full() -> bool:
 
 
 @timeit
-def serial_transaction_request() -> dict:
+def serial_transaction_request(allocated_miners: int) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -121,47 +103,56 @@ def serial_transaction_request() -> dict:
 			With adversarial nodes, multiple techniques exist to buffer mined blocks before
 			they are accepted, but generally depend on the distributed nature of an actual
 			blockchain, and is out of scope for this basic implementation
+
+	NOTE: Ditching mp.pool approach, since we there is no good way to terminate processes cleanly:
+		https://stackoverflow.com/questions/36962462/terminate-a-python-multiprocessing-program-once-a-one-of-its-workers-meets-a-cer
 	'''
+	mined_block_event = mp.Event()
+	quit_event = mp.Event()
 	global chain
 	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
-	miner_count = 3
-	with mp.Pool(min(miner_count, mp.cpu_count() -1)) as miner_pool:
-		miner_pool.apply_async(Miner.mine(new_block))
+	miner_count = min(allocated_miners, mp.cpu_count() - 1)
+	for miner_index in range(miner_count):
+		p = mp.Process(target=Miner.mine, args=(miner_index, new_block, quit_event, mined_block_event))
+		p.start()
+	mined_block_event.wait()
+	quit_event.set()
+
+
+def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
+	# Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
+	transaction = f"{str(1)}:{payer['user']}:{payer['pubKey']}:{payee['user']}:{str(payer['nonce'])}"
+	message = SHA256.new()
+	message.update(bytes(transaction, encoding='utf8'))
+	priv_key = RSA.import_key(bytes.fromhex(payer['privKey']))
+	signature = pkcs1_15.new(priv_key).sign(message)
+	signatureHex = signature.hex()
+
+	return transaction, signatureHex
+
 
 
 def shard_transaction_request() -> dict:
 	pass
 
-def test():
+def test(transactions):
 	global wallets
 	users_res = {user: get_user_wallet_info(user) for user in wallets.users()}
-	for _ in range(1):
+	for _ in range(transactions):
 		# Get payer/payee pair
 		payer = users_res['Alice']
 		payee = users_res['Bob']
-	
+
 		# Increment payer nonce
 		users_res[payer['user']]['nonce'] = users_res[payer['user']].setdefault('nonce', -1) + 1
 
-		# Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
-		transaction = f"{str(1)}:{payer['user']}:{payer['pubKey']}:{payee['user']}:{str(payer['nonce'])}"
-		message = SHA256.new()
-		message.update(bytes(transaction, encoding='utf8'))
-		priv_key = RSA.import_key(bytes.fromhex(payer['privKey']))
-		signature = pkcs1_15.new(priv_key).sign(message)
-		signatureHex = signature.hex()
+		transaction, signatureHex = create_transaction_req(payer, payee)
 
-	blah = process_transaction_request({'transaction': transaction, 'signature': signatureHex})
-	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
-	mining = mine
-	print(mining(new_block))
-	print(mining.last_time)
+		process_transaction_request({'transaction': transaction, 'signature': signatureHex})
+	mining = serial_transaction_request
+	mining(3)
+	return mining.last_time
 
-
-@timeit
-def mine(block: Block):
-	return Miner.mine(block)
 
 def test2():
-	global wallets
-	return wallets.get_user('Alice').shard_id
+	return ShardController.shards

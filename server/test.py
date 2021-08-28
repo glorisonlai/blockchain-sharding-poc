@@ -1,3 +1,4 @@
-from shardingApp.services import test
+from shardingApp.services import test, test2
 
-print(test())
+if __name__ == '__main__':
+	print(test())

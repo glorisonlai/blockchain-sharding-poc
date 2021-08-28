@@ -1,10 +1,9 @@
 from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
-import multiprocessing as mp
 from queue import Queue
 import random
-import functools
+from .store import WalletController
 
 class Wallet:
 	def __init__(self, username: str) -> None:
@@ -21,26 +20,32 @@ class Wallet:
 		self._pub_key = key.public_key().export_key('PEM')
 		return (key.export_key('PEM'), key.public_key().export_key('PEM'))
 
+
 	@property
 	def name(self) -> str:
 		return self._name
+
 
 	@property
 	def balance(self) -> int:
 		return self._balance
 	
+
 	def pay(self, decrement: int) -> None:
 		if not isinstance(decrement, int) or abs(decrement) > self._balance:
 			raise ValueError
 		self._balance -= decrement
 
+
 	@property
 	def pub_key(self) -> str:
 		return self._pub_key
 
+
 	@property
 	def shard_id(self) -> int:
 		return self._shard_id
+
 
 	@shard_id.setter
 	def shard_id(self, new_shard_id: int) -> None:
@@ -48,8 +53,10 @@ class Wallet:
 			raise ValueError
 		self._shard_id = new_shard_id
 
+
 	def correct_nonce(self, nonce) -> bool:
 		return nonce == self._transactions
+
 
 	def increment_transaction(self) -> None:
 		self._transactions += 1
@@ -57,28 +64,6 @@ class Wallet:
 
 	def enough_balance(self, decrement: int) -> bool:
 		return decrement > 0 or decrement > self.balance
-	
-
-class WalletController:
-	_wallets = {}
-	def __init__(self, *names: list[str]) -> None:
-		WalletController._wallets = {
-			name: Wallet(name) for name in names
-		}
-
-	@staticmethod
-	def users() -> list[str]:
-		return list(WalletController._wallets.keys())
-
-	@staticmethod
-	def has_user(username: str) -> bool:
-		return username in WalletController._wallets 
-
-	@staticmethod
-	def get_user(username: str) -> Wallet:
-		if username not in WalletController._wallets:
-			raise KeyError
-		return WalletController._wallets[username]
 
 
 class Transaction:
@@ -165,7 +150,6 @@ class Transaction:
 			
 	@staticmethod
 	def validate_transaction(amount: int, user_id: str, public_key: bytes, payee: str, nonce: int) -> bool:
-
 		return (Transaction.validate_stakeholders(user_id, public_key, payee) and \
 			Transaction.validate_amount(amount, user_id, nonce))
 
@@ -216,6 +200,10 @@ class BlockChain:
 		return self._unconfirmed_transactions.full()
 
 
+	def unconfirmed_empty(self) -> bool:
+		return self._unconfirmed_transactions.empty()
+
+
 	def unconfirmed_head(self) -> Transaction:
 		if self._unconfirmed_transactions.empty():
 			raise IndexError
@@ -242,42 +230,24 @@ class Shard:
 
 	@property
 	def shard_wallets(self):
-		return functools.reduce(lambda accum, el: accum+el, self._occupations)
-
-
-class ShardController:
-	_num_shards = 3
-	
-	def __init__(self, wallets) -> None:
-		self._shards: list[Shard] = [Shard()] * self._num_shards
-		self._allocate_wallets(wallets)
-
-
-	def _allocate_wallets(self, wallets: list[Wallet]) -> None:
-		for wallet in wallets:
-			allocated_shard = random.randint(0, len(self._shards)-1)
-			wallet.shard_id = allocated_shard
-			self._shards[allocated_shard].allocate_occupation(wallet)
-
-
-	def get_shard_wallets(self, shard_id) -> list[Wallet]:
-		if shard_id < 0 or shard_id > len(self._shards):
-			return []
-		return self._shards[shard_id].shard_wallets
+		return self._occupations
 
 
 class Miner:
-	mining_difficulty = 3
+	mining_difficulty = 2
 
 	@staticmethod
-	def mine(block: Block) -> Block:
+	def mine(id: int, block: Block, quit_signal, mined_signal) -> Block:
 		iterations = 0
-		max, min = 50, 50
-		while (any(block.block_hash[byte_index] != 0 \
-			for byte_index in range(Miner.mining_difficulty))):
-			iterations += 1
-			print(iterations)
-			# TODO: Should eventually move over to os.urandom
-			# block.nonce = os.urandom(5)
-			block.nonce = random.randbytes(10)
-		return block
+		while not quit_signal.is_set():
+			if (any(block.block_hash[byte_index] != 0 \
+				for byte_index in range(Miner.mining_difficulty))):
+				iterations += 1
+				# block.nonce = os.urandom(5)
+				block.nonce = random.randbytes(10)
+			else:
+				print(f'Miner #{id} mined in {iterations} iterations!')
+				mined_signal.set()
+				# sleep(1)
+				return block
+		return None
