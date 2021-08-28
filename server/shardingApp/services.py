@@ -153,7 +153,14 @@ def test():
 
 	blah = process_transaction_request({'transaction': transaction, 'signature': signatureHex})
 	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
-	return(Miner.mine(new_block))
+	mining = mine
+	print(mining(new_block))
+	print(mining.last_time)
+
+
+@timeit
+def mine(block: Block):
+	return Miner.mine(block)
 
 def test2():
 	global wallets

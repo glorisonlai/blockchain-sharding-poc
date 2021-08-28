@@ -267,16 +267,17 @@ class ShardController:
 
 
 class Miner:
-	mining_difficulty = 1
+	mining_difficulty = 3
 
 	@staticmethod
 	def mine(block: Block) -> Block:
 		iterations = 0
-		while (any(block.block_hash[byte_index] != b'' \
+		max, min = 50, 50
+		while (any(block.block_hash[byte_index] != 0 \
 			for byte_index in range(Miner.mining_difficulty))):
 			iterations += 1
 			print(iterations)
 			# TODO: Should eventually move over to os.urandom
 			# block.nonce = os.urandom(5)
-			block.nonce = random.randbytes(5)
+			block.nonce = random.randbytes(10)
 		return block
