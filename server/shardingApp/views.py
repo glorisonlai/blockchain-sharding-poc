@@ -32,3 +32,7 @@ def user(req: Request):
 @api_view(['GET'])
 def test(req: Request):
 	return Response(services.test(), status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+def test2(req: Request):
+	return Response(services.test2(), status=status.HTTP_200_OK)

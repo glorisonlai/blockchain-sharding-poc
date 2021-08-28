@@ -23,7 +23,9 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "cosmos": "npm run build:tailwind && cosmos",
+    "cosmos:export": "npm run build:tailwind && cosmos-export"
   },
   "eslintConfig": {
     "extends": [
@@ -52,6 +54,7 @@
     "@types/node": "^12.20.19",
     "@types/node-forge": "^0.10.3",
     "@types/react": "^17.0.17",
-    "@types/react-dom": "^17.0.9"
+    "@types/react-dom": "^17.0.9",
+    "react-cosmos": "^5.6.3"
   }
 }

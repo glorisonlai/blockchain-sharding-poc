@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, createRef } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import Segment from "./components/segment";
 import "./App.css";

@@ -23,5 +23,5 @@ urlpatterns = [
     path('parse-transactions', transactions),
     path('shard/', shard),
     path('normal/', normal),
-    path('test/', test),
+    path('test/', test)
 ]

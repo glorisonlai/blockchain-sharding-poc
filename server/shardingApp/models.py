@@ -10,7 +10,7 @@ class Wallet:
 	def __init__(self, username: str) -> None:
 		self._name: str = username
 		self._balance: int = 100
-		self._pub_key: str = ''
+		self._pub_key: bytes = b''
 		self._shard_id: int = -1
 		self._transactions = 0
 		self.generate_rsa_key_pair()
@@ -18,7 +18,7 @@ class Wallet:
 
 	def generate_rsa_key_pair(self) -> tuple[bytes,bytes]:
 		key = RSA.generate(2048)
-		self._pub_key = key.public_key()
+		self._pub_key = key.public_key().export_key('PEM')
 		return (key.export_key('PEM'), key.public_key().export_key('PEM'))
 
 	@property
@@ -49,7 +49,7 @@ class Wallet:
 		self._shard_id = new_shard_id
 
 	def correct_nonce(self, nonce) -> bool:
-		return nonce == self._transactions + 1
+		return nonce == self._transactions
 
 	def increment_transaction(self) -> None:
 		self._transactions += 1
@@ -68,7 +68,7 @@ class WalletController:
 
 	@staticmethod
 	def users() -> list[str]:
-		return WalletController._wallets.keys()
+		return list(WalletController._wallets.keys())
 
 	@staticmethod
 	def has_user(username: str) -> bool:
@@ -83,18 +83,22 @@ class WalletController:
 
 class Transaction:
 	@staticmethod
-	def validate(transaction_str: str, signature: str) -> bool:
-		return (Transaction.verify_signature(transaction_str, signature) and \
-			Transaction.validate_transaction(transaction_str))
+	def validate(transaction_str: str, signatureHex: str) -> bool:
+		try:
+			amount, user_id, public_key, payee, nonce = Transaction.parse_string(transaction_str)
+		except ValueError:
+			return False
+		return (Transaction.verify_signature(transaction_str, public_key, signatureHex) and \
+			Transaction.validate_transaction(amount, user_id,public_key, payee, nonce))
 
 
 	@staticmethod
 	def convert_to_bytes(transaction: str) -> bytes:
-		return bytearray(transaction.encode('latin-1'))
+		return bytes(transaction, encoding='utf8')
 
 
 	@staticmethod
-	def parse_string(transaction_str: str) -> tuple[int, str, str, str, int]:
+	def parse_string(transaction_str: str) -> tuple[int, str, bytes, str, int]:
 		''' Return transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
 
 			Arguments
@@ -108,6 +112,7 @@ class Transaction:
 		'''
 		transaction_str_tokens = transaction_str.split(':')
 		amount, user_id, public_key, payee, nonce = transaction_str_tokens
+		public_key = bytes.fromhex(public_key)
 		amount = int(amount)
 		nonce = int(nonce)
 
@@ -134,33 +139,32 @@ class Transaction:
 			user_wallet.enough_balance(amount)
 
 	@staticmethod
-	def verify_signature(transaction_str: str, public_key: str, signature: str) -> bool:
+	def verify_signature(transaction_str: str, public_key: bytes, signatureHex: str) -> bool:
 		'''
 		-- Transaction and Signature exist
 		-- Signature verifies original sender 
 		'''
-		if not (transaction_str and public_key and signature): return False
+		if not (transaction_str and public_key and signatureHex): return False
+		signature = bytes.fromhex(signatureHex)
 		try:
 			sig_verify = SHA256.new()
-			sig_verify.update(bytes(transaction_str))
-			pkcs1_15.new(public_key).verify(sig_verify, signature)
+			sig_verify.update(bytes(transaction_str, encoding='utf8'))
+			RSA_public_key = RSA.import_key(public_key)
+			pkcs1_15.new(RSA_public_key).verify(sig_verify, signature)
 			return True
 		except (ValueError, TypeError):
 			return False
 
 	@staticmethod
-	def validate_stakeholders(user_id: str, public_key: str, payee: str) -> bool:
+	def validate_stakeholders(user_id: str, public_key: bytes, payee: str) -> bool:
 		return WalletController.has_user(user_id) and \
 			WalletController.has_user(payee) and \
+			user_id != payee and \
 			WalletController.get_user(user_id).pub_key == public_key and \
 			WalletController.get_user(user_id).name == user_id
 			
 	@staticmethod
-	def validate_transaction(transaction_str: str, ) -> bool:
-		try:
-			amount, user_id, public_key, payee, nonce = Transaction.parse_string(transaction_str)
-		except ValueError:
-			return False
+	def validate_transaction(amount: int, user_id: str, public_key: bytes, payee: str, nonce: int) -> bool:
 
 		return (Transaction.validate_stakeholders(user_id, public_key, payee) and \
 			Transaction.validate_amount(amount, user_id, nonce))
@@ -187,14 +191,14 @@ class Block:
 	def nonce(self, new_bytes) -> None:
 		if not isinstance(new_bytes, bytes):
 			raise TypeError
-		self.nonce = new_bytes
+		self._nonce = new_bytes
 		self.calculate_block_hash()
 
 	def calculate_block_hash(self) -> None:
 		message = SHA256.new()
 		message.update(self._prev_hash)
 		message.update(self._transaction)
-		message.update(self.nonce)
+		message.update(self._nonce)
 		self._block_hash = message.digest()
 
 
@@ -271,6 +275,7 @@ class Miner:
 		while (any(block.block_hash[byte_index] != b'' \
 			for byte_index in range(Miner.mining_difficulty))):
 			iterations += 1
+			print(iterations)
 			# TODO: Should eventually move over to os.urandom
 			# block.nonce = os.urandom(5)
 			block.nonce = random.randbytes(5)

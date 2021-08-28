@@ -1,18 +1,21 @@
 from .models import Block, BlockChain, Miner, ShardController, Transaction, WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
+from Crypto.PublicKey import RSA
 import time
 import functools
 import os
 import multiprocessing as mp
+import random
 
 """ Global chain """
 chain = BlockChain()# TODO: Should eventually move over to Redis
 
 
 """ Global wallets """
-wallets = WalletController('Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
-	'Harry', 'Ingrid', 'Jason', 'KEVIN', 'Loc', 'Margaret')
+wallets = WalletController('Alice', 'Bob' )
+# 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
+# 	'Harry', 'Ingrid', 'Jason', 'KEVIN', 'Loc', 'Margaret'
 
 
 def timeit(func):
@@ -37,15 +40,15 @@ def timeit(func):
 	return wrapper
 
 
-def get_user_wallet_info(username: str):
+def get_user_wallet_info(username: str) -> dict[str, str]:
 	global wallets
 	user_wallet = wallets.get_user(username)
 	priv_key, pub_key = user_wallet.generate_rsa_key_pair()
 	return {
 		'user': user_wallet.name,
-		'balance': user_wallet.balance,
-		'privKey': str(priv_key), 
-		'pubKey': str(pub_key)
+		'balance': str(user_wallet.balance),
+		'privKey': priv_key.hex(), 
+		'pubKey': pub_key.hex()
 	}
 
 
@@ -66,8 +69,8 @@ def process_transaction_request(data: dict) -> bool:
 	consistent blockchain.
 	'''
 	transaction_str: str = data['transaction']
-	signature: str = data['signature']
-	if not (check_blockchain_not_full() and Transaction.validate(transaction_str, signature)):
+	signatureHex: str = data['signature']
+	if not (check_blockchain_not_full() and Transaction.validate(transaction_str, signatureHex)):
 		return False
 
 	# Transaction is verified - Try to add to chain
@@ -86,7 +89,7 @@ def queue_transaction(validated_transaction_str: str) -> None:
 def decrement_pending_transaction_value(valid_transaction_str: str) -> None:
 	amount, user_id, _, _, _ = Transaction.parse_string(valid_transaction_str)
 	global wallets
-	user_wallet = wallets[user_id] # Index of username in transaction
+	user_wallet = wallets.get_user(user_id) # Index of username in transaction
 	user_wallet.increment_transaction()
 	user_wallet.pay(amount)
 
@@ -130,9 +133,28 @@ def shard_transaction_request() -> dict:
 	pass
 
 def test():
-	blah = chain.last_transaction().block_hash
-	hex = blah.hex()
-	back = bytes.fromhex(hex)
-	print(blah)
-	print(back)
-	return blah == back
+	global wallets
+	users_res = {user: get_user_wallet_info(user) for user in wallets.users()}
+	for _ in range(1):
+		# Get payer/payee pair
+		payer = users_res['Alice']
+		payee = users_res['Bob']
+	
+		# Increment payer nonce
+		users_res[payer['user']]['nonce'] = users_res[payer['user']].setdefault('nonce', -1) + 1
+
+		# Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
+		transaction = f"{str(1)}:{payer['user']}:{payer['pubKey']}:{payee['user']}:{str(payer['nonce'])}"
+		message = SHA256.new()
+		message.update(bytes(transaction, encoding='utf8'))
+		priv_key = RSA.import_key(bytes.fromhex(payer['privKey']))
+		signature = pkcs1_15.new(priv_key).sign(message)
+		signatureHex = signature.hex()
+
+	blah = process_transaction_request({'transaction': transaction, 'signature': signatureHex})
+	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
+	return(Miner.mine(new_block))
+
+def test2():
+	global wallets
+	return wallets.get_user('Alice').shard_id
