@@ -1,6 +1,5 @@
 from Crypto import Signature
-from .models import Block, BlockChain, Miner, ShardController, Transaction
-from .store import WalletController
+from .models import Block, BlockChain, Miner, NodeNetwork, ShardController, Transaction, WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
 from Crypto.PublicKey import RSA
@@ -17,12 +16,10 @@ wallets = WalletController('Alice', 'Bob' )
 # 	'Harry', 'Ingrid', 'Jason', 'KEVIN', 'Loc', 'Margaret'
 
 """ Global shards """
-shards = ShardController
-
+shards = ShardController()
 
 
 def get_user_wallet_info(username: str) -> dict[str, str]:
-	global wallets
 	user_wallet = wallets.get_user(username)
 	priv_key, pub_key = user_wallet.generate_rsa_key_pair()
 	return {
@@ -45,14 +42,15 @@ def get_user_wallets() -> list[dict]:
 	return map(get_user_wallet_info, wallets.users())
 
 
-def process_transaction_request(data: dict) -> bool:
+def process_transaction_request(data: dict, network: NodeNetwork) -> bool:
 	'''  Validates transaction came from user and appends it to Blockchain waiting list 
 	We assume all nodes get the transactions in the same order, so all nodes work on a 
 	consistent blockchain.
 	'''
 	transaction_str: str = data['transaction']
 	signatureHex: str = data['signature']
-	if not (check_blockchain_not_full() and Transaction.validate(transaction_str, signatureHex)):
+	transaction_chk = Transaction(network)
+	if not (transaction_chk.validate(transaction_str, signatureHex) and check_blockchain_not_full()):
 		return False
 
 	# Transaction is verified - Try to add to chain
@@ -64,20 +62,17 @@ def process_transaction_request(data: dict) -> bool:
 
 
 def queue_transaction(validated_transaction_str: str) -> None:
-	global chain
 	chain.append_unconfirmed(Transaction.convert_to_bytes(validated_transaction_str))
 
 
 def decrement_pending_transaction_value(valid_transaction_str: str) -> None:
 	amount, user_id, _, _, _ = Transaction.parse_string(valid_transaction_str)
-	global wallets
 	user_wallet = wallets.get_user(user_id) # Index of username in transaction
 	user_wallet.increment_transaction()
 	user_wallet.pay(amount)
 
 
 def check_blockchain_not_full() -> bool:
-	global chain
 	return not chain.unconfirmed_full()
 
 
@@ -109,7 +104,6 @@ def serial_transaction_request(allocated_miners: int) -> dict:
 	'''
 	mined_block_event = mp.Event()
 	quit_event = mp.Event()
-	global chain
 	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
 	miner_count = min(allocated_miners, mp.cpu_count() - 1)
 	for miner_index in range(miner_count):
@@ -136,7 +130,6 @@ def shard_transaction_request() -> dict:
 	pass
 
 def test(transactions):
-	global wallets
 	users_res = {user: get_user_wallet_info(user) for user in wallets.users()}
 	for _ in range(transactions):
 		# Get payer/payee pair
@@ -148,7 +141,7 @@ def test(transactions):
 
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
-		process_transaction_request({'transaction': transaction, 'signature': signatureHex})
+		process_transaction_request({'transaction': transaction, 'signature': signatureHex}, wallets)
 	mining = serial_transaction_request
 	mining(3)
 	return mining.last_time

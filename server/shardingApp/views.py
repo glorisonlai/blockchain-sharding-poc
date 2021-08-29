@@ -20,6 +20,7 @@ def normal(req: Request):
 
 @api_view(['POST'])
 def transactions(req: Request):
+	""" Process array of transactions and append to blockchain queue """
 	queued_transactions = sum(
 		map(lambda transaction: services.process_transaction_request(transaction), req.data)
 	)
@@ -27,11 +28,13 @@ def transactions(req: Request):
 
 @api_view(['GET'])
 def user(req: Request):
+	""" Get array of of all user Wallet info, and their private keys """
 	return Response(services.get_user_wallets(), status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 def test(req: Request):
-	return Response(services.test(), status=status.HTTP_200_OK)
+	""" Create transactions and append to single blockchain """
+	return Response(services.test(5), status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 def test2(req: Request):

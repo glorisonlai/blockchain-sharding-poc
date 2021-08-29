@@ -3,7 +3,8 @@ from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
 from queue import Queue
 import random
-from .store import WalletController
+from .decorators import classproperty
+
 
 class Wallet:
 	def __init__(self, username: str) -> None:
@@ -66,15 +67,86 @@ class Wallet:
 		return decrement > 0 or decrement > self.balance
 
 
+class NodeNetwork:
+	""" Interface for WalletController and ShardController to implement. Helps with type hinting"""
+	def users(self) -> list[str]:
+		raise NameError
+
+	def can_pay(self, payer: str, payee: str) -> bool:
+		return NameError
+
+	def get_user(self, username: str) -> Wallet:
+		return NameError
+
+	def wallets(self) -> list[Wallet]:
+		return NameError
+
+
+class WalletController(NodeNetwork):
+	"""
+	Class to store wallets and provide methods to access or find wallets
+	Stores synced blockchain associated with wallets
+	"""
+	def __init__(self, *names: list[str]) -> None:
+		self._wallets = {
+			name: Wallet(name) for name in names
+		}
+		self._chain = BlockChain()
+
+	def users(self) -> list[str]:
+		return list(self._wallets.keys())
+
+	def can_pay(self, payer: str, payee: str) -> bool:
+		return payer != payee and \
+			payer in self._wallets and \
+			payee in self._wallets
+
+	def get_user(self, username: str) -> Wallet:
+		if username not in self._wallets:
+			raise KeyError
+		return self._wallets[username]
+
+	def wallets(self) -> list[Wallet]:
+		return self._wallets
+
+
+class ShardController(NodeNetwork):
+	_num_shards = 3
+	
+	def __init__(self, wallets) -> None:
+		self._shards: list[Shard] = [Shard()] * self._num_shards
+		self._allocate_wallets(wallets)
+
+
+	def _allocate_wallets(self, wallets: list[Wallet]) -> None:
+		for wallet in wallets:
+			allocated_shard = random.randint(0, len(self._shards)-1)
+			wallet.shard_id = allocated_shard
+			self._shards[allocated_shard].allocate_occupation(wallet)
+
+
+	def get_shard_wallets(self, shard_id) -> list[Wallet]:
+		if shard_id < 0 or shard_id > len(self._shards):
+			return []
+		return self._shards[shard_id].shard_wallets
+
+	@classproperty
+	def shards(cls):
+		return ShardController._num_shards
+
+
 class Transaction:
-	@staticmethod
-	def validate(transaction_str: str, signatureHex: str) -> bool:
+	def __init__(self, cls: NodeNetwork) -> None:
+		self.network = cls
+
+
+	def validate(self, transaction_str: str, signatureHex: str) -> bool:
 		try:
-			amount, user_id, public_key, payee, nonce = Transaction.parse_string(transaction_str)
+			amount, user_id, public_key, payee, nonce = self.parse_string(transaction_str)
 		except ValueError:
 			return False
-		return (Transaction.verify_signature(transaction_str, public_key, signatureHex) and \
-			Transaction.validate_transaction(amount, user_id,public_key, payee, nonce))
+		return (self.verify_signature(transaction_str, public_key, signatureHex) and \
+			self.validate_transaction(amount, user_id,public_key, payee, nonce))
 
 
 	@staticmethod
@@ -103,25 +175,6 @@ class Transaction:
 
 		return amount, user_id, public_key, payee, nonce
 
-	@staticmethod
-	def validate_amount(amount: int, user_id: str, nonce: int) -> bool:
-		''' Checks:
-		-- Amount is not negative, 0, or exceeds max size
-		-- Username and Payee exists in wallets
-		-- Username and Public Key matches info in Wallet store
-		-- Nonce was not previously used
-		-- Chain mempool is not full
-
-			Arguments
-				Transaction -- String representation of transaction, formatted as above
-
-			Returns
-				True if request passes all checks
-		'''
-		user_wallet = WalletController.get_user(user_id)
-		return amount > 0 and \
-			user_wallet.correct_nonce(nonce) and \
-			user_wallet.enough_balance(amount)
 
 	@staticmethod
 	def verify_signature(transaction_str: str, public_key: bytes, signatureHex: str) -> bool:
@@ -140,18 +193,38 @@ class Transaction:
 		except (ValueError, TypeError):
 			return False
 
-	@staticmethod
-	def validate_stakeholders(user_id: str, public_key: bytes, payee: str) -> bool:
-		return WalletController.has_user(user_id) and \
-			WalletController.has_user(payee) and \
-			user_id != payee and \
-			WalletController.get_user(user_id).pub_key == public_key and \
-			WalletController.get_user(user_id).name == user_id
+
+	def validate_transaction(self, amount: int, user_id: str, public_key: bytes, payee: str, nonce: int) -> bool:
+		return (self.validate_stakeholders(user_id, public_key, payee) and \
+			self.validate_amount(amount, user_id, nonce))
+
+
+	def validate_stakeholders(self, user_id: str, public_key: bytes, payee: str) -> bool:
+		''' Checks:
+		-- Username and Payee exists in wallets
+		-- Username and Payee are not the same person
+		-- Username and Public Key matches info in Wallet store
+		'''
+		return self.network.can_pay(user_id, payee) and \
+			self.network.get_user(user_id).pub_key == public_key and \
+			self.network.get_user(user_id).name == user_id
 			
-	@staticmethod
-	def validate_transaction(amount: int, user_id: str, public_key: bytes, payee: str, nonce: int) -> bool:
-		return (Transaction.validate_stakeholders(user_id, public_key, payee) and \
-			Transaction.validate_amount(amount, user_id, nonce))
+
+	def validate_amount(self, amount: int, user_id: str, nonce: int) -> bool:
+		''' Checks:
+		-- Amount is not negative, 0, or exceeds max size
+		-- Nonce was not previously used
+
+			Arguments
+				Transaction -- String representation of transaction, formatted as above
+
+			Returns
+				True if request passes all checks
+		'''
+		user_wallet = self.network.get_user(user_id)
+		return amount > 0 and \
+			user_wallet.correct_nonce(nonce) and \
+			user_wallet.enough_balance(amount)
 
 
 class Block:
@@ -234,20 +307,23 @@ class Shard:
 
 
 class Miner:
-	mining_difficulty = 2
+	_mining_difficulty = 2
 
-	@staticmethod
-	def mine(id: int, block: Block, quit_signal, mined_signal) -> Block:
+	def mine(self, id: int, block: Block, quit_signal, mined_signal) -> Block:
 		iterations = 0
 		while not quit_signal.is_set():
 			if (any(block.block_hash[byte_index] != 0 \
-				for byte_index in range(Miner.mining_difficulty))):
+				for byte_index in range(self.mining_difficulty))):
 				iterations += 1
 				# block.nonce = os.urandom(5)
 				block.nonce = random.randbytes(10)
 			else:
-				print(f'Miner #{id} mined in {iterations} iterations!')
 				mined_signal.set()
+				print(f'Miner #{id} mined in {iterations} iterations!')
 				# sleep(1)
 				return block
 		return None
+
+	@classproperty
+	def mining_difficulty() -> int:
+		return Miner._mining_difficulty
