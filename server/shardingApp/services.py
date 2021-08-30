@@ -1,37 +1,25 @@
-from Crypto import Signature
-from .models import Block, BlockChain, Miner, NodeNetwork, ShardController, Transaction, WalletController
+from .models import Block, Miner, ShardController, WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
 from Crypto.PublicKey import RSA
 import multiprocessing as mp
 from .decorators import timeit
+import random
+from queue import Queue
 
-""" Global chain """
-chain = BlockChain()# TODO: Should eventually move over to Redis
 
-
-""" Global wallets """
-wallets = WalletController('Alice', 'Bob' )
+""" Global Blockchain network """
+wallets = WalletController(['Alice', 'Bob'] )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
-# 	'Harry', 'Ingrid', 'Jason', 'KEVIN', 'Loc', 'Margaret'
+# 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
-""" Global shards """
-shards = ShardController()
-
-
-def get_user_wallet_info(username: str) -> dict[str, str]:
-	user_wallet = wallets.get_user(username)
-	priv_key, pub_key = user_wallet.generate_rsa_key_pair()
-	return {
-		'user': user_wallet.name,
-		'balance': str(user_wallet.balance),
-		'shard': user_wallet.shard_id,
-		'privKey': priv_key.hex(), 
-		'pubKey': pub_key.hex()
-	}
+""" Global Sharded network """
+shards = ShardController('Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe')
+# 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
+# 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
 
-def get_user_wallets() -> list[dict]:
+def get_user_wallets() -> list[dict[str, str]]:
 	''' 
 	Generates new RSA key pair for global wallets, and returns Wallet information and new key pair
 	Saves new public key to global wallets, but does NOT save private key
@@ -39,45 +27,39 @@ def get_user_wallets() -> list[dict]:
 		Returns
 			Dictionary with Wallet information, and key pair
 	'''
-	return map(get_user_wallet_info, wallets.users())
+	return list(map(wallets.get_user_wallet_info, wallets.users()))
 
 
-def process_transaction_request(data: dict, network: NodeNetwork) -> bool:
+def process_serial_transaction_request(data: dict) -> bool:
 	'''  Validates transaction came from user and appends it to Blockchain waiting list 
 	We assume all nodes get the transactions in the same order, so all nodes work on a 
 	consistent blockchain.
 	'''
 	transaction_str: str = data['transaction']
 	signatureHex: str = data['signature']
-	transaction_chk = Transaction(network)
-	if not (transaction_chk.validate(transaction_str, signatureHex) and check_blockchain_not_full()):
+	if not (transaction_str and signatureHex):
 		return False
-
-	# Transaction is verified - Try to add to chain
-	queue_transaction(transaction_str)
-
-	# Transaction is in queue - Prevent payer from double-spending before confirmation
-	decrement_pending_transaction_value(transaction_str)
-	return True
+	return wallets.process_transaction_request(transaction_str, signatureHex)
 
 
-def queue_transaction(validated_transaction_str: str) -> None:
-	chain.append_unconfirmed(Transaction.convert_to_bytes(validated_transaction_str))
+def process_sharded_transaction_request(data: dict) -> bool:
+	transaction_str: str = data['transaction']
+	signature_hex: str = data['signature']
+	str_shard_id: str = data['shardId']
+	if not (transaction_str and signature_hex and str_shard_id):
+		return False
+	try:
+		shard_id = int(str_shard_id)
+	except ValueError:
+		return False
+	if not shards.valid_shard_id(shard_id):
+		return False
+	return shards.send_transaction_request(shard_id, transaction_str, signature_hex)
 
-
-def decrement_pending_transaction_value(valid_transaction_str: str) -> None:
-	amount, user_id, _, _, _ = Transaction.parse_string(valid_transaction_str)
-	user_wallet = wallets.get_user(user_id) # Index of username in transaction
-	user_wallet.increment_transaction()
-	user_wallet.pay(amount)
-
-
-def check_blockchain_not_full() -> bool:
-	return not chain.unconfirmed_full()
 
 
 @timeit
-def serial_transaction_request(allocated_miners: int) -> dict:
+def serial_transaction_request(allocated_miners: int, network: WalletController) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -102,15 +84,32 @@ def serial_transaction_request(allocated_miners: int) -> dict:
 	NOTE: Ditching mp.pool approach, since we there is no good way to terminate processes cleanly:
 		https://stackoverflow.com/questions/36962462/terminate-a-python-multiprocessing-program-once-a-one-of-its-workers-meets-a-cer
 	'''
-	mined_block_event = mp.Event()
-	quit_event = mp.Event()
-	new_block = Block(chain.last_transaction().block_hash, chain.unconfirmed_head())
-	miner_count = min(allocated_miners, mp.cpu_count() - 1)
-	for miner_index in range(miner_count):
-		p = mp.Process(target=Miner.mine, args=(miner_index, new_block, quit_event, mined_block_event))
-		p.start()
-	mined_block_event.wait()
-	quit_event.set()
+	print("⛏️  Starting Mining... ⛏️")
+	while not network.chain.unconfirmed_empty():
+		# manager = mp.Manager()
+		mined_block_event = mp.Event()
+		quit_event = mp.Event()
+		# ret_queue = Queue()
+		# blah = Queue()
+		new_block = Block(network.chain.last_transaction().block_hash, network.chain.unconfirmed_head())
+		miner_count = min(allocated_miners, mp.cpu_count() - 1)
+		for miner_index in range(miner_count):
+			p = mp.Process(target=Miner.mine, args=(miner_index, new_block, quit_event, mined_block_event))
+			p.start()
+		mined_block_event.wait()
+		quit_event.set()
+		# network.chain.append_to_chain(ret_queue.get())
+
+
+@timeit
+def shard_transaction_request() -> dict:
+	# for shard in shards.shards:
+	# 	p = mp.Process(target=serial_transaction_request, args=(1, shard))
+	# 	p.start()
+	shard_pool = mp.Pool(processes = shards.num_shards)
+	shard_pool.map(shard_transaction_request, [(1, shard) for shard in shards.shards])
+	shard_pool.close()
+	shard_pool.join()
 
 
 def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
@@ -125,27 +124,48 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 	return transaction, signatureHex
 
 
-
-def shard_transaction_request() -> dict:
-	pass
-
-def test(transactions):
-	users_res = {user: get_user_wallet_info(user) for user in wallets.users()}
+def test_serial(transactions: int) -> int:
+	users_res = get_user_wallets()
 	for _ in range(transactions):
+		payer_index = random.randrange(0, len(users_res))
+		payee_index = random.randrange(0, len(users_res)-1)
+		if payee_index >= payer_index:
+			payee_index += 1
 		# Get payer/payee pair
-		payer = users_res['Alice']
-		payee = users_res['Bob']
+		payer = users_res[payer_index]
+		payee = users_res[payee_index]
 
 		# Increment payer nonce
-		users_res[payer['user']]['nonce'] = users_res[payer['user']].setdefault('nonce', -1) + 1
+		payer['nonce'] = payer.setdefault('nonce', -1) + 1
 
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
-		process_transaction_request({'transaction': transaction, 'signature': signatureHex}, wallets)
+		process_serial_transaction_request({'transaction': transaction, 'signature': signatureHex})
 	mining = serial_transaction_request
-	mining(3)
+	mining(5, wallets)
 	return mining.last_time
 
 
-def test2():
-	return ShardController.shards
+def test_shard(transactions: int) -> int:
+	users_res: list[list[dict[str, str]]] = []
+	for shard_id in range(shards.num_shards):
+		users_res.append([shards.get_user_wallet_info(shard_id, user) for user in shards.get_shard_users(shard_id)])
+	for _ in range(transactions):
+		shard_index = random.randrange(0, shards.num_shards)
+		payer_index = random.randrange(0, len(users_res[shard_index]))
+		payee_index = random.randrange(0, len(users_res[shard_index])-1)
+		if payee_index >= payer_index:
+			payee_index += 1
+		# Get payer/payee pair
+		payer = users_res[shard_index][payer_index]
+		payee = users_res[shard_index][payee_index]
+
+		# Increment payer nonce
+		payer['nonce'] = payer.setdefault('nonce', -1) + 1
+
+		transaction, signatureHex = create_transaction_req(payer, payee)
+
+		process_sharded_transaction_request({'transaction': transaction, 'signature': signatureHex, 'shardId': str(payer['shardId'])})
+	mining = shard_transaction_request
+	mining()
+	return mining.last_time

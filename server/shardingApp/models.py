@@ -4,14 +4,15 @@ from Crypto.Signature import pkcs1_15
 from queue import Queue
 import random
 from .decorators import classproperty
+from time import sleep
 
 
 class Wallet:
-	def __init__(self, username: str) -> None:
+	def __init__(self, username: str, shard_id: int) -> None:
 		self._name: str = username
 		self._balance: int = 100
 		self._pub_key: bytes = b''
-		self._shard_id: int = -1
+		self._shard_id: int = shard_id
 		self._transactions = 0
 		self.generate_rsa_key_pair()
 
@@ -67,34 +68,33 @@ class Wallet:
 		return decrement > 0 or decrement > self.balance
 
 
-class NodeNetwork:
-	""" Interface for WalletController and ShardController to implement. Helps with type hinting"""
-	def users(self) -> list[str]:
-		raise NameError
 
-	def can_pay(self, payer: str, payee: str) -> bool:
-		return NameError
-
-	def get_user(self, username: str) -> Wallet:
-		return NameError
-
-	def wallets(self) -> list[Wallet]:
-		return NameError
-
-
-class WalletController(NodeNetwork):
+class WalletController():
 	"""
 	Class to store wallets and provide methods to access or find wallets
 	Stores synced blockchain associated with wallets
 	"""
-	def __init__(self, *names: list[str]) -> None:
+	def __init__(self, names: list[str], shard_id = -1) -> None:
 		self._wallets = {
-			name: Wallet(name) for name in names
+			name: Wallet(name, shard_id) for name in names
 		}
 		self._chain = BlockChain()
 
+
+	@property
+	def chain(self):
+		return self._chain
+
+
 	def users(self) -> list[str]:
 		return list(self._wallets.keys())
+
+
+	def add_user(self, username: str) -> None:
+		if username in self._wallets:
+			raise KeyError
+		self._wallets[username] = Wallet(username)
+
 
 	def can_pay(self, payer: str, payee: str) -> bool:
 		return payer != payee and \
@@ -106,46 +106,111 @@ class WalletController(NodeNetwork):
 			raise KeyError
 		return self._wallets[username]
 
-	def wallets(self) -> list[Wallet]:
-		return self._wallets
 
-
-class ShardController(NodeNetwork):
-	_num_shards = 3
+	def get_user_wallet_info(self, username: str) -> dict[str, str]:
+		user_wallet = self.get_user(username)
+		priv_key, pub_key = user_wallet.generate_rsa_key_pair()
+		return {
+			'user': user_wallet.name,
+			'balance': str(user_wallet.balance),
+			'shardId': user_wallet.shard_id,
+			'privKey': priv_key.hex(), 
+			'pubKey': pub_key.hex()
+		}
 	
-	def __init__(self, wallets) -> None:
-		self._shards: list[Shard] = [Shard()] * self._num_shards
-		self._allocate_wallets(wallets)
+
+	def process_transaction_request(self, transaction_str: str, signature_hex: str) -> bool:
+		'''  Validates transaction came from user and appends it to Blockchain waiting list 
+		We assume all nodes get the transactions in the same order, so all nodes work on a 
+		consistent blockchain.
+		'''
+		transaction_chk = Transaction(self)
+		if not (transaction_chk.validate(transaction_str, signature_hex) and self.check_blockchain_not_full()):
+			return False
+
+		# Transaction is verified - Try to add to chain
+		self._queue_transaction(transaction_str)
+
+		# Transaction is in queue - Prevent payer from double-spending before confirmation
+		self._decrement_pending_transaction_value(transaction_str)
+		return True
 
 
-	def _allocate_wallets(self, wallets: list[Wallet]) -> None:
-		for wallet in wallets:
-			allocated_shard = random.randint(0, len(self._shards)-1)
-			wallet.shard_id = allocated_shard
-			self._shards[allocated_shard].allocate_occupation(wallet)
+	def _queue_transaction(self, validated_transaction_str: str) -> None:
+		self._chain.append_unconfirmed(Transaction.convert_to_bytes(validated_transaction_str))
 
 
-	def get_shard_wallets(self, shard_id) -> list[Wallet]:
-		if shard_id < 0 or shard_id > len(self._shards):
-			return []
-		return self._shards[shard_id].shard_wallets
+	def _decrement_pending_transaction_value(self, valid_transaction_str: str) -> None:
+		amount, user_id, _, _, _ = Transaction.parse_string(valid_transaction_str)
+		user_wallet = self.get_user(user_id) # Index of username in transaction
+		user_wallet.increment_transaction()
+		user_wallet.pay(amount)
 
-	@classproperty
-	def shards(cls):
-		return ShardController._num_shards
+
+	def check_blockchain_not_full(self) -> bool:
+		return not self._chain.unconfirmed_full()
+
+
+class ShardController():
+	def __init__(self, *wallets: list[str]) -> None:
+		self._num_shards = min(3, len(wallets))
+		self._shards = self._allocate_wallets(wallets)
+
+
+	def _allocate_wallets(self, wallets: tuple[str]) -> list[WalletController]:
+		shards_list: list[WalletController] = []
+		num_shards = self.num_shards
+		wallets_per_shard = len(wallets) // num_shards
+		rem_wallets = len(wallets) % num_shards
+		start_index = 0
+
+		for shard_id in range(num_shards):
+			shards_list.append(WalletController(wallets[start_index: \
+				start_index + wallets_per_shard + (1 if rem_wallets else 0)], shard_id))
+			start_index += wallets_per_shard + (1 if rem_wallets else 0)
+			if rem_wallets: rem_wallets -= 1
+		return shards_list
+
+
+	def valid_shard_id(self, shard_id: int) -> bool:
+		return isinstance(shard_id, int) and \
+			shard_id >= 0 and \
+			shard_id < self.num_shards
+
+
+	def get_shard_users(self, shard_id: int) -> list[str]:
+		return self._shards[shard_id].users()
+
+
+	def get_user_wallet_info(self, shard_id: int, username: str) -> dict[str, str]:
+		return self._shards[shard_id].get_user_wallet_info(username)
+
+
+	def send_transaction_request(self, shard_id: int, transaction_str: str, signature_hex: str) -> bool:
+		return self._shards[shard_id].process_transaction_request(transaction_str, signature_hex)
+
+
+	@property
+	def shards(self):
+		return self._shards
+
+
+	@property
+	def num_shards(self):
+		return self._num_shards
 
 
 class Transaction:
-	def __init__(self, cls: NodeNetwork) -> None:
+	def __init__(self, cls: WalletController) -> None:
 		self.network = cls
 
 
-	def validate(self, transaction_str: str, signatureHex: str) -> bool:
+	def validate(self, transaction_str: str, signature_hex: str) -> bool:
 		try:
 			amount, user_id, public_key, payee, nonce = self.parse_string(transaction_str)
 		except ValueError:
 			return False
-		return (self.verify_signature(transaction_str, public_key, signatureHex) and \
+		return (self.verify_signature(transaction_str, public_key, signature_hex) and \
 			self.validate_transaction(amount, user_id,public_key, payee, nonce))
 
 
@@ -244,12 +309,14 @@ class Block:
 	def nonce(self) -> bytes:
 		return self._nonce
 
+
 	@nonce.setter
 	def nonce(self, new_bytes) -> None:
 		if not isinstance(new_bytes, bytes):
 			raise TypeError
 		self._nonce = new_bytes
 		self.calculate_block_hash()
+
 
 	def calculate_block_hash(self) -> None:
 		message = SHA256.new()
@@ -267,6 +334,10 @@ class BlockChain:
 
 	def last_transaction(self) -> Block:
 		return self._chain[-1]
+
+	
+	def append_to_chain(self, block: Block) -> None:
+		self._chain.append(block)
 
 
 	def unconfirmed_full(self) -> bool:
@@ -309,21 +380,25 @@ class Shard:
 class Miner:
 	_mining_difficulty = 2
 
-	def mine(self, id: int, block: Block, quit_signal, mined_signal) -> Block:
+	@staticmethod
+	def mine(id: int, block: Block, quit_signal, mined_signal) -> None:
 		iterations = 0
+		print(id)
+		# sleep(5)
+		# print(f'{id} finsihed sleeping')
 		while not quit_signal.is_set():
 			if (any(block.block_hash[byte_index] != 0 \
-				for byte_index in range(self.mining_difficulty))):
+				for byte_index in range(Miner.mining_difficulty))):
 				iterations += 1
 				# block.nonce = os.urandom(5)
 				block.nonce = random.randbytes(10)
 			else:
+				# queue.put(block)
 				mined_signal.set()
 				print(f'Miner #{id} mined in {iterations} iterations!')
-				# sleep(1)
-				return block
-		return None
+		return
+
 
 	@classproperty
-	def mining_difficulty() -> int:
-		return Miner._mining_difficulty
+	def mining_difficulty(self) -> int:
+		return self._mining_difficulty
