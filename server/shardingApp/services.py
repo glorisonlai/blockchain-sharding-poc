@@ -9,12 +9,12 @@ import random
 
 
 """ Global Blockchain network """
-wallets = WalletController(['Alice', 'Bob'] )
+# wallets = WalletController(['Alice', 'Bob'] )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
 """ Global Sharded network """
-# shards = ShardController('Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe')
+shards = ShardController('Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe')
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
@@ -59,7 +59,7 @@ def process_sharded_transaction_request(data: dict) -> bool:
 
 
 @timeit
-def serial_transaction_request(allocated_miners: int, network: WalletController) -> dict:
+def serial_transaction_request(allocated_miners: int, network: WalletController, events) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -86,15 +86,15 @@ def serial_transaction_request(allocated_miners: int, network: WalletController)
 	'''
 	print("⛏️  Starting Mining... ⛏️")
 	while not network.chain.unconfirmed_empty():
-		# manager = mp.Manager()
-		mined_block_event = mp.Event()
-		quit_event: synchronize.Event = mp.Event()
-		# ret_queue = Queue()
-		# blah = Queue()
+		# mined_block_event = mp.Event()
+		# quit_event: synchronize.Event = mp.Event()
+		mined_block_event = events[0]
+		quit_event = events[1]
+		# ret_queue = mp.Queue()
 		new_block = Block(network.chain.last_transaction().block_hash, network.chain.unconfirmed_head())
 		miner_count = min(allocated_miners, mp.cpu_count() - 1)
 		for miner_index in range(miner_count):
-			p = mp.Process(target=Miner.mine, args=(miner_index, new_block, quit_event, mined_block_event))
+			p = mp.Process(target=Miner.mine, args=(miner_index, new_block,  quit_event, mined_block_event))
 			p.start()
 		mined_block_event.wait()
 		quit_event.set()
@@ -107,7 +107,15 @@ def shard_transaction_request() -> dict:
 	# 	p = mp.Process(target=serial_transaction_request, args=(1, shard))
 	# 	p.start()
 	shard_pool = mp.Pool(processes = shards.num_shards)
-	shard_pool.map(shard_transaction_request, [(1, shard) for shard in shards.shards])
+	a1 = mp.Event()
+	a2 = mp.Event()
+	a3 = mp.Event()
+	a4 = mp.Event()
+	a5 = mp.Event()
+	a6 = mp.Event()
+	s1,s2,s3 = shards.shards
+	shard_pool.map(shard_transaction_request, [(1, s1, [a1, a2]), (1,s2,[a3,a4]), (1,s3,[a5,a6])])
+	# shard_pool.map(shard_transaction_request, [(1, shard) for shard in shards.shards])
 	shard_pool.close()
 	shard_pool.join()
 
@@ -146,26 +154,26 @@ def test_serial(transactions: int) -> int:
 	return mining.last_time
 
 
-# def test_shard(transactions: int) -> int:
-# 	users_res: list[list[dict[str, str]]] = []
-# 	for shard_id in range(shards.num_shards):
-# 		users_res.append([shards.get_user_wallet_info(shard_id, user) for user in shards.get_shard_users(shard_id)])
-# 	for _ in range(transactions):
-# 		shard_index = random.randrange(0, shards.num_shards)
-# 		payer_index = random.randrange(0, len(users_res[shard_index]))
-# 		payee_index = random.randrange(0, len(users_res[shard_index])-1)
-# 		if payee_index >= payer_index:
-# 			payee_index += 1
-# 		# Get payer/payee pair
-# 		payer = users_res[shard_index][payer_index]
-# 		payee = users_res[shard_index][payee_index]
+def test_shard(transactions: int) -> int:
+	users_res: list[list[dict[str, str]]] = []
+	for shard_id in range(shards.num_shards):
+		users_res.append([shards.get_user_wallet_info(shard_id, user) for user in shards.get_shard_users(shard_id)])
+	for _ in range(transactions):
+		shard_index = random.randrange(0, shards.num_shards)
+		payer_index = random.randrange(0, len(users_res[shard_index]))
+		payee_index = random.randrange(0, len(users_res[shard_index])-1)
+		if payee_index >= payer_index:
+			payee_index += 1
+		# Get payer/payee pair
+		payer = users_res[shard_index][payer_index]
+		payee = users_res[shard_index][payee_index]
 
-# 		# Increment payer nonce
-# 		payer['nonce'] = payer.setdefault('nonce', -1) + 1
+		# Increment payer nonce
+		payer['nonce'] = payer.setdefault('nonce', -1) + 1
 
-# 		transaction, signatureHex = create_transaction_req(payer, payee)
+		transaction, signatureHex = create_transaction_req(payer, payee)
 
-# 		process_sharded_transaction_request({'transaction': transaction, 'signature': signatureHex, 'shardId': str(payer['shardId'])})
-# 	mining = shard_transaction_request
-# 	mining()
-# 	return mining.last_time
+		process_sharded_transaction_request({'transaction': transaction, 'signature': signatureHex, 'shardId': str(payer['shardId'])})
+	mining = shard_transaction_request
+	mining()
+	return mining.last_time

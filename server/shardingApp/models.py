@@ -6,6 +6,7 @@ import random
 from .decorators import classproperty
 from time import sleep
 from multiprocessing.synchronize import Event
+from multiprocessing import Queue
 
 
 class Wallet:
@@ -113,9 +114,9 @@ class WalletController():
 			Synced blockchain associated with wallets
 	'''
 	def __init__(self, names: list[str], shard_id = -1) -> None:
-		self._wallets = {
-			name: self.create_user(name, shard_id) for name in names
-		}
+		self._wallets = {}
+		for name in names:
+			self._wallets[name] = self.create_user(name, shard_id)
 		self._chain = BlockChain()
 
 
@@ -523,11 +524,8 @@ class Miner:
 	_mining_difficulty = 2
 
 	@staticmethod
-	def mine(id: int, block: Block, quit_signal: Event, mined_signal: Event) -> None:
+	def mine(id: int, block: Block,  quit_signal: Event, mined_signal: Event) -> None:
 		iterations = 0
-		print(id)
-		# sleep(5)
-		# print(f'{id} finsihed sleeping')
 		while not quit_signal.is_set():
 			if (any(block.block_hash[byte_index] != 0 \
 				for byte_index in range(Miner.mining_difficulty))):
