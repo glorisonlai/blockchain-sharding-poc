@@ -7,14 +7,14 @@ import multiprocessing as mp
 from .decorators import timeit
 import random
 
-
+users = ['Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe']
 """ Global Blockchain network """
-wallets = WalletController(['Alice', 'Bob'] )
+wallets = WalletController( users )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
 """ Global Sharded network """
-shards = ShardController('Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe')
+shards = ShardController( users )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
@@ -59,7 +59,7 @@ def process_sharded_transaction_request(data: dict) -> bool:
 
 
 # @timeit
-def serial_transaction_request(allocated_miners: int, network: WalletController, events) -> dict:
+def serial_transaction_request(allocated_miners: int, network: WalletController) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -86,52 +86,31 @@ def serial_transaction_request(allocated_miners: int, network: WalletController,
 	'''
 	print("⛏️  Starting Mining... ⛏️")
 	transactions = 0
-	# mined_block_event = events[0]
-	# quit_event = events[1]
 	while not network.chain.unconfirmed_empty():
 		mined_block_event = mp.Event()
 		quit_event: synchronize.Event = mp.Event()
-		# ret_queue = mp.Queue()
+		ret_queue = mp.Queue()
 		new_block = Block(network.chain.last_transaction().block_hash, network.chain.unconfirmed_head())
 		miner_count = min(allocated_miners, mp.cpu_count() - 1)
 		for miner_index in range(miner_count):
-			p = mp.Process(target=Miner.mine, args=(miner_index, new_block,  quit_event, mined_block_event))
+			p = mp.Process(target=Miner.mine, args=(miner_index, new_block, ret_queue, quit_event, mined_block_event))
 			p.start()
 		mined_block_event.wait()
 		quit_event.set()
-		# network.chain.append_to_chain(ret_queue.get())
+		network.chain.append_to_chain(ret_queue.get())
 		transactions += 1
-		# mined_block_event.clear()
-		# quit_event.clear()
 	print(f'Network processed {transactions} transactions!')
 
 
 @timeit
 def shard_transaction_request() -> dict:
-	m = mp.Manager()
-	a1 = m.Event()
-	a2 = m.Event()
-	a3 = m.Event()
-	a4 = m.Event()
-	a5 = m.Event()
-	a6 = m.Event()
-	s1,s2,s3 = shards.shards
-	p1 = mp.Process(target=serial_transaction_request, args=(1, s1, [a1,a2]))
-	p1.start()
-	p2 = mp.Process(target=serial_transaction_request, args=(1, s2, [a3,a4]))
-	p2.start()
-	p3 = mp.Process(target=serial_transaction_request, args=(1, s3, [a5,a6]))
-	p3.start()
-	p1.join()
-	p2.join()
-	p3.join()
-	# shard_pool = mp.Pool(processes = shards.num_shards)
-	# blah = shard_pool.map(serial_transaction_request, [(1, s1, [a1, a2]), (1,s2,[a3,a4]), (1,s3,[a5,a6])])
-	# shard_pool.map(serial_transaction_request, [(1, shard) for shard in shards.shards])
-	# shard_pool.close()
-	# shard_pool.join()
-	# while any(not blah.is_set() for blah in [a1, a3, a5]):
-	# 	pass
+	jobs:list[mp.Process] = []
+	for shard in shards.shards:
+		p = mp.Process(target=serial_transaction_request, args=(1, shard))
+		p.start()
+		jobs.append(p)
+	for job in jobs:
+		job.join()
 	return
 
 
@@ -146,11 +125,10 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 
 	return transaction, signatureHex
 
+
 @timeit
-def blah():
-	a1 = mp.Event()
-	a2 = mp.Event()
-	serial_transaction_request(5, wallets, [a1, a2])
+def serial_transaction_wrapper():
+	serial_transaction_request(5, wallets)
 
 
 def test_serial(transactions: int) -> int:
@@ -170,7 +148,7 @@ def test_serial(transactions: int) -> int:
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
 		process_serial_transaction_request({'transaction': transaction, 'signature': signatureHex})
-	mining = blah
+	mining = serial_transaction_wrapper
 	mining()
 	# mining(5, wallets)
 	return mining.last_time

@@ -222,7 +222,7 @@ class ShardController():
 		_shards: list[WalletController]
 			List of shard networks
 	'''
-	def __init__(self, *wallets: list[str]) -> None:
+	def __init__(self, wallets: list[str]) -> None:
 		self._num_shards = min(3, len(wallets))
 		self._shards = self._allocate_wallets(wallets)
 
@@ -524,7 +524,7 @@ class Miner:
 	_mining_difficulty = 2
 
 	@staticmethod
-	def mine(id: int, block: Block,  quit_signal: Event, mined_signal: Event) -> None:
+	def mine(id: int, block: Block, queue: Queue, quit_signal: Event, mined_signal: Event) -> None:
 		iterations = 0
 		while not quit_signal.is_set():
 			if (any(block.block_hash[byte_index] != 0 \
@@ -533,7 +533,7 @@ class Miner:
 				# block.nonce = os.urandom(5)
 				block.nonce = random.randbytes(10)
 			else:
-				# queue.put(block)
+				queue.put(block)
 				mined_signal.set()
 				print(f'Miner #{id} mined in {iterations} iterations!')
 		return
