@@ -43,6 +43,7 @@ def process_serial_transaction_request(data: dict) -> bool:
 
 
 def process_sharded_transaction_request(data: dict) -> bool:
+	''' Validates transaction request and add to shard mempool '''
 	transaction_str: str = data['transaction']
 	signature_hex: str = data['signature']
 	str_shard_id: str = data['shardId']
@@ -103,7 +104,8 @@ def serial_transaction_request(allocated_miners: int, network: WalletController)
 
 
 @timeit
-def shard_transaction_request() -> dict:
+def shard_transaction_request() -> None:
+	""" Instantiate one process per shard to process shard transactions """
 	jobs:list[mp.Process] = []
 	for shard in shards.shards:
 		p = mp.Process(target=serial_transaction_request, args=(1, shard))
@@ -115,7 +117,9 @@ def shard_transaction_request() -> dict:
 
 
 def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
-	# Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE>
+	''' Create new transaction and signature pair to be processed
+	Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE> 
+	'''
 	transaction = f"{str(1)}:{payer['user']}:{payer['pubKey']}:{payee['user']}:{str(payer['nonce'])}"
 	message = SHA256.new()
 	message.update(bytes(transaction, encoding='utf8'))
@@ -127,13 +131,16 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 
 
 @timeit
-def serial_transaction_wrapper():
+def serial_transaction_wrapper() -> None:
+	""" Wrapper to directly access timeit properties """
 	serial_transaction_request(5, wallets)
 
 
 def test_serial(transactions: int) -> int:
+	""" Generate transactions in serial network, then mine all at once """
 	users_res = get_user_wallets()
 	for _ in range(transactions):
+		# Randonly choose payer and payee from network users
 		payer_index = random.randrange(0, len(users_res))
 		payee_index = random.randrange(0, len(users_res)-1)
 		if payee_index >= payer_index:
@@ -145,26 +152,35 @@ def test_serial(transactions: int) -> int:
 		# Increment payer nonce
 		payer['nonce'] = payer.setdefault('nonce', -1) + 1
 
+		# Create transaction encoding and signature pair
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
+		# Add transaction to mempool
 		process_serial_transaction_request({'transaction': transaction, 'signature': signatureHex})
+	# Start mining all mempool transactions
 	mining = serial_transaction_wrapper
 	mining()
-	# mining(5, wallets)
 	return mining.last_time
 
 
 
 def test_shard(transactions: int) -> int:
 	users_res: list[list[dict[str, str]]] = []
+	
+	# Zip all shard users into separate nested lists
 	for shard_id in range(shards.num_shards):
 		users_res.append([shards.get_user_wallet_info(shard_id, user) for user in shards.get_shard_users(shard_id)])
+	
 	for _ in range(transactions):
+		# Choose random shard
 		shard_index = random.randrange(0, shards.num_shards)
+
+		# Choose random payer and payee from shard
 		payer_index = random.randrange(0, len(users_res[shard_index]))
 		payee_index = random.randrange(0, len(users_res[shard_index])-1)
 		if payee_index >= payer_index:
 			payee_index += 1
+
 		# Get payer/payee pair
 		payer = users_res[shard_index][payer_index]
 		payee = users_res[shard_index][payee_index]
@@ -172,9 +188,12 @@ def test_shard(transactions: int) -> int:
 		# Increment payer nonce
 		payer['nonce'] = payer.setdefault('nonce', -1) + 1
 
+		# Create transaction and signature pair
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
+		# Append transaction to shard mempool
 		process_sharded_transaction_request({'transaction': transaction, 'signature': signatureHex, 'shardId': str(payer['shardId'])})
+	# Create parallel processes to mine through shard transactions
 	mining = shard_transaction_request
 	mining()
 	return mining.last_time
