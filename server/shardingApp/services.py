@@ -1,4 +1,4 @@
-from multiprocessing import synchronize
+from multiprocessing import Event, synchronize
 from .models import Block, Miner, ShardController, WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
@@ -9,7 +9,7 @@ import random
 
 
 """ Global Blockchain network """
-# wallets = WalletController(['Alice', 'Bob'] )
+wallets = WalletController(['Alice', 'Bob'] )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
@@ -58,7 +58,7 @@ def process_sharded_transaction_request(data: dict) -> bool:
 
 
 
-@timeit
+# @timeit
 def serial_transaction_request(allocated_miners: int, network: WalletController, events) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
@@ -85,11 +85,12 @@ def serial_transaction_request(allocated_miners: int, network: WalletController,
 		https://stackoverflow.com/questions/36962462/terminate-a-python-multiprocessing-program-once-a-one-of-its-workers-meets-a-cer
 	'''
 	print("⛏️  Starting Mining... ⛏️")
+	transactions = 0
+	# mined_block_event = events[0]
+	# quit_event = events[1]
 	while not network.chain.unconfirmed_empty():
-		# mined_block_event = mp.Event()
-		# quit_event: synchronize.Event = mp.Event()
-		mined_block_event = events[0]
-		quit_event = events[1]
+		mined_block_event = mp.Event()
+		quit_event: synchronize.Event = mp.Event()
 		# ret_queue = mp.Queue()
 		new_block = Block(network.chain.last_transaction().block_hash, network.chain.unconfirmed_head())
 		miner_count = min(allocated_miners, mp.cpu_count() - 1)
@@ -99,25 +100,39 @@ def serial_transaction_request(allocated_miners: int, network: WalletController,
 		mined_block_event.wait()
 		quit_event.set()
 		# network.chain.append_to_chain(ret_queue.get())
+		transactions += 1
+		# mined_block_event.clear()
+		# quit_event.clear()
+	print(f'Network processed {transactions} transactions!')
 
 
 @timeit
 def shard_transaction_request() -> dict:
-	# for shard in shards.shards:
-	# 	p = mp.Process(target=serial_transaction_request, args=(1, shard))
-	# 	p.start()
-	shard_pool = mp.Pool(processes = shards.num_shards)
-	a1 = mp.Event()
-	a2 = mp.Event()
-	a3 = mp.Event()
-	a4 = mp.Event()
-	a5 = mp.Event()
-	a6 = mp.Event()
+	m = mp.Manager()
+	a1 = m.Event()
+	a2 = m.Event()
+	a3 = m.Event()
+	a4 = m.Event()
+	a5 = m.Event()
+	a6 = m.Event()
 	s1,s2,s3 = shards.shards
-	shard_pool.map(shard_transaction_request, [(1, s1, [a1, a2]), (1,s2,[a3,a4]), (1,s3,[a5,a6])])
-	# shard_pool.map(shard_transaction_request, [(1, shard) for shard in shards.shards])
-	shard_pool.close()
-	shard_pool.join()
+	p1 = mp.Process(target=serial_transaction_request, args=(1, s1, [a1,a2]))
+	p1.start()
+	p2 = mp.Process(target=serial_transaction_request, args=(1, s2, [a3,a4]))
+	p2.start()
+	p3 = mp.Process(target=serial_transaction_request, args=(1, s3, [a5,a6]))
+	p3.start()
+	p1.join()
+	p2.join()
+	p3.join()
+	# shard_pool = mp.Pool(processes = shards.num_shards)
+	# blah = shard_pool.map(serial_transaction_request, [(1, s1, [a1, a2]), (1,s2,[a3,a4]), (1,s3,[a5,a6])])
+	# shard_pool.map(serial_transaction_request, [(1, shard) for shard in shards.shards])
+	# shard_pool.close()
+	# shard_pool.join()
+	# while any(not blah.is_set() for blah in [a1, a3, a5]):
+	# 	pass
+	return
 
 
 def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
@@ -130,6 +145,12 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 	signatureHex = signature.hex()
 
 	return transaction, signatureHex
+
+@timeit
+def blah():
+	a1 = mp.Event()
+	a2 = mp.Event()
+	serial_transaction_request(5, wallets, [a1, a2])
 
 
 def test_serial(transactions: int) -> int:
@@ -149,9 +170,11 @@ def test_serial(transactions: int) -> int:
 		transaction, signatureHex = create_transaction_req(payer, payee)
 
 		process_serial_transaction_request({'transaction': transaction, 'signature': signatureHex})
-	mining = serial_transaction_request
-	mining(5, wallets)
+	mining = blah
+	mining()
+	# mining(5, wallets)
 	return mining.last_time
+
 
 
 def test_shard(transactions: int) -> int:
