@@ -3,6 +3,7 @@ from .models import Block, Miner, ShardController, WalletController
 from Crypto.Hash import SHA256
 from Crypto.Signature import pkcs1_15
 from Crypto.PublicKey import RSA
+from time import sleep
 import multiprocessing as mp
 from .decorators import timeit
 import random
@@ -100,6 +101,7 @@ def serial_transaction_request(allocated_miners: int, network: WalletController,
 		while (ret_queue.qsize() < majority): # Wait for consensus
 			pass
 		quit_event.set()
+		sleep(0.1)
 		network.chain.append_to_chain(ret_queue.get())
 		print(f'Consensus ({majority} nodes) reached! 🧑‍⚖️')
 		transactions += 1
@@ -118,7 +120,7 @@ def shard_transaction_request(miners: int) -> None:
 	rem_miners = miners % len(shards.shards)
 	jobs:list[mp.Process] = []
 	for index, shard in enumerate(shards.shards):
-		p = mp.Process(target=serial_transaction_request, args=(divided_miners + 1 if index < rem_miners else 0, shard, index))
+		p = mp.Process(target=serial_transaction_request, args=(divided_miners + 1 if index < rem_miners else divided_miners, shard, index))
 		p.start()
 		jobs.append(p)
 	for job in jobs:
