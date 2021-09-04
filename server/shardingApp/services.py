@@ -8,15 +8,14 @@ from .decorators import timeit
 import random
 
 users = ['Alice', 'Bob', 'Chris', 'David', 'Edgar', 'Phoebe']
-""" Global Blockchain network """
-wallets = WalletController( users )
 # 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
 # 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
+""" Global Blockchain network """
+wallets = WalletController( users )
+
 """ Global Sharded network """
 shards = ShardController( users )
-# 'Chris', 'David', 'Edgar', 'Phoebe', 'Greg', \
-# 	'Harry', 'Ingrid', 'Jason', 'Kevin', 'Loc', 'Margaret'
 
 
 def get_user_wallets() -> list[dict[str, str]]:
@@ -58,9 +57,7 @@ def process_sharded_transaction_request(data: dict) -> bool:
 	return shards.send_transaction_request(shard_id, transaction_str, signature_hex)
 
 
-
-# @timeit
-def serial_transaction_request(allocated_miners: int, network: WalletController) -> dict:
+def serial_transaction_request(allocated_miners: int, network: WalletController, shard_id: int = -1) -> dict:
 	''' Start validating blocks
 	-- Create Block with Proof_of_Work of tail of BlockChain
 	-- Instantiate 10 miners in parallel (Pretend like they're nodes in the network)
@@ -85,30 +82,43 @@ def serial_transaction_request(allocated_miners: int, network: WalletController)
 	NOTE: Ditching mp.pool approach, since we there is no good way to terminate processes cleanly:
 		https://stackoverflow.com/questions/36962462/terminate-a-python-multiprocessing-program-once-a-one-of-its-workers-meets-a-cer
 	'''
-	print("⛏️  Starting Mining... ⛏️")
+	if shard_id == -1:
+		print("⛏️  Starting Mining... ⛏️")
+	else:
+		print(f"⛏️  Shard #{shard_id} Starting Mining... ⛏️")
 	transactions = 0
+	miner_count = min(allocated_miners, mp.cpu_count() - 1)
+	majority = miner_count // 2 + 1
 	while not network.chain.unconfirmed_empty():
-		mined_block_event = mp.Event()
 		quit_event: synchronize.Event = mp.Event()
 		ret_queue = mp.Queue()
 		new_block = Block(network.chain.last_transaction().block_hash, network.chain.unconfirmed_head())
-		miner_count = min(allocated_miners, mp.cpu_count() - 1)
 		for miner_index in range(miner_count):
-			p = mp.Process(target=Miner.mine, args=(miner_index, new_block, ret_queue, quit_event, mined_block_event))
+			p = mp.Process(target=Miner.mine, args=(miner_index, new_block, ret_queue, quit_event))
 			p.start()
-		mined_block_event.wait()
+
+		while (ret_queue.qsize() < majority): # Wait for consensus
+			pass
 		quit_event.set()
 		network.chain.append_to_chain(ret_queue.get())
+		print(f'Consensus ({majority} nodes) reached! 🧑‍⚖️')
 		transactions += 1
-	print(f'Network processed {transactions} transactions!')
+	print('====================')
+	if shard_id == -1:
+		print(f'Network processed 💸 {transactions} 💸 transactions! 💸')
+	else:
+		print(f'Shard ID {shard_id} processed 💸 {transactions} 💸 transactions! 💸')
+	print('====================')
 
 
 @timeit
-def shard_transaction_request() -> None:
+def shard_transaction_request(miners: int) -> None:
 	""" Instantiate one process per shard to process shard transactions """
+	divided_miners = miners // len(shards.shards)
+	rem_miners = miners % len(shards.shards)
 	jobs:list[mp.Process] = []
-	for shard in shards.shards:
-		p = mp.Process(target=serial_transaction_request, args=(1, shard))
+	for index, shard in enumerate(shards.shards):
+		p = mp.Process(target=serial_transaction_request, args=(divided_miners + 1 if index < rem_miners else 0, shard, index))
 		p.start()
 		jobs.append(p)
 	for job in jobs:
@@ -121,6 +131,7 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 	Transaction is formatted as <AMOUNT>:<USERNAME>:<PUBLIC_KEY>:<PAYEE>:<NONCE> 
 	'''
 	transaction = f"{str(1)}:{payer['user']}:{payer['pubKey']}:{payee['user']}:{str(payer['nonce'])}"
+
 	message = SHA256.new()
 	message.update(bytes(transaction, encoding='utf8'))
 	priv_key = RSA.import_key(bytes.fromhex(payer['privKey']))
@@ -131,9 +142,9 @@ def create_transaction_req(payer: dict[str, str], payee: dict[str, str]):
 
 
 @timeit
-def serial_transaction_wrapper() -> None:
+def serial_transaction_wrapper(miners: int) -> None:
 	""" Wrapper to directly access timeit properties """
-	serial_transaction_request(5, wallets)
+	serial_transaction_request(miners, wallets)
 
 
 def test_serial(transactions: int) -> int:
@@ -159,7 +170,7 @@ def test_serial(transactions: int) -> int:
 		process_serial_transaction_request({'transaction': transaction, 'signature': signatureHex})
 	# Start mining all mempool transactions
 	mining = serial_transaction_wrapper
-	mining()
+	mining(9)
 	return mining.last_time
 
 
@@ -195,5 +206,5 @@ def test_shard(transactions: int) -> int:
 		process_sharded_transaction_request({'transaction': transaction, 'signature': signatureHex, 'shardId': str(payer['shardId'])})
 	# Create parallel processes to mine through shard transactions
 	mining = shard_transaction_request
-	mining()
+	mining(9)
 	return mining.last_time

@@ -185,7 +185,7 @@ class WalletController():
 		if not (transaction_chk.validate(transaction_str, signature_hex) and self.check_mempool_not_full()):
 			return False
 
-		# Transaction is verified - Try to add to chain
+		# Transaction is verified - Try to add to mempool
 		self._queue_transaction(transaction_str)
 
 		# Transaction is in queue - Prevent payer from double-spending before confirmation
@@ -211,7 +211,6 @@ class WalletController():
 		return not self._chain.unconfirmed_full()
 
 
-class ShardController():
 	'''
 	Class simulating sharded blockchain network
 
@@ -222,6 +221,7 @@ class ShardController():
 		_shards: list[WalletController]
 			List of shard networks
 	'''
+class ShardController():
 	def __init__(self, wallets: list[str]) -> None:
 		self._num_shards = min(3, len(wallets))
 		self._shards = self._allocate_wallets(wallets)
@@ -490,7 +490,7 @@ class BlockChain:
 
 # class Shard(WalletController):
 # 	'''
-#	WIP
+# 	WIP
 # 	Subclass of WalletController
 # 	Buffers cross-shard transactions and sends swap transaction first.
 # 	When Swap transaction is accepted into the blockchain, associated transaction can then be verified
@@ -524,18 +524,20 @@ class Miner:
 	_mining_difficulty = 2
 
 	@staticmethod
-	def mine(id: int, block: Block, queue: Queue, quit_signal: Event, mined_signal: Event) -> None:
+	def mine(id: int, block: Block, queue: Queue, quit_signal: Event) -> None:
 		iterations = 0
-		while not quit_signal.is_set():
+		mined = False
+		while not (quit_signal.is_set() or mined):
+			# Check number of leading 0's is equal to mining difficulty
 			if (any(block.block_hash[byte_index] != 0 \
-				for byte_index in range(Miner.mining_difficulty))):
+				for byte_index in range(Miner.mining_difficulty))): 
 				iterations += 1
 				# block.nonce = os.urandom(5)
 				block.nonce = random.randbytes(10)
 			else:
 				queue.put(block)
-				mined_signal.set()
-				print(f'Miner #{id} mined in {iterations} iterations!')
+				print(f'Miner 👷 #{id} mined in {iterations} iterations!')
+				mined = True
 		return
 
 
