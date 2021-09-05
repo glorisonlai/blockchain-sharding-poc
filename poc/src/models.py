@@ -8,6 +8,33 @@ from time import sleep
 from multiprocessing.synchronize import Event
 from multiprocessing import Queue
 
+'''
+File contains the classes which perform the bulk of logical operations.
+
+Wallet - Container for user information.
+
+WalletController - Class that deals with serial networks. 
+					Contains functions that create transactions, and keeps state of the network Blockchain. 
+					Also used as an individual shard.
+
+ShardController - Class that deals with sharded network.
+					Container for multiple networks/shards (WalletController)
+					Contains functions that pass requests onto the correct shard
+
+Transaction - Class that deals with deserializing and verifying transactions
+
+Block - Container for block information. Unit of blockchain
+			Contains Previous Block Hash, Current Transaction, Nonce, and Block Hash
+			Miners compete to find the correct Nonce that creates a Block Hash with number of leading 0's
+			The number of leading 0's is referred to as mining difficulty
+
+BlockChain - Container for confirmed Blocks and Mempool
+				Mempool refers to transactions yet to be mined
+
+Miner - Class that contains the mining function
+		Mining function is called and performed in parallel
+'''
+
 
 class Wallet:
 	'''
@@ -221,9 +248,12 @@ class WalletController():
 		_shards: list[WalletController]
 			List of shard networks
 	'''
+
+
 class ShardController():
 	def __init__(self, wallets: list[str]) -> None:
-		self._num_shards = min(3, len(wallets))
+		num_shards = 3
+		self._num_shards = min(num_shards, len(wallets))
 		self._shards = self._allocate_wallets(wallets)
 
 
@@ -486,35 +516,6 @@ class BlockChain:
 		if self._unconfirmed_transactions.full():
 			raise IndexError
 		self._unconfirmed_transactions.put(transaction)
-
-
-# class Shard(WalletController):
-# 	'''
-# 	WIP
-# 	Subclass of WalletController
-# 	Buffers cross-shard transactions and sends swap transaction first.
-# 	When Swap transaction is accepted into the blockchain, associated transaction can then be verified
-
-# 	Attributes
-# 		_num_occupations: int
-# 			Number of 'Juries' to validate mining attempt
-
-# 	TODO: Implement Contract protocol to fulfill swap transactions
-# 	'''
-# 	_num_occupations = 2
-
-# 	def __init__(self, wallets: list[str]) -> None:
-# 		self._occupations: list[Wallet] = [] * Shard._num_occupations
-	
-
-# 	def allocate_occupation(self, wallet: Wallet) -> None:
-# 		allocated_occ = random.randint(0, len(self._occupations)-1)
-# 		self._occupations[allocated_occ].append(wallet)
-
-
-# 	@property
-# 	def shard_wallets(self):
-# 		return self._occupations
 
 
 class Miner:
